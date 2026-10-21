@@ -1,0 +1,107 @@
+# Changelog
+
+## 1.3.3
+### Patch Changes
+
+- 3364cc0: Prevent provider, transport, inspection, and authentication errors from exposing credentials in remote compaction errors or native fallback warnings. Preserve cancellation with a safe AbortError and omit raw error causes.
+  
+  Finish SSE inspection at the terminal response and coordinate tee cancellation. Apply an extension-owned deadline across the entire operation, including stalled injected response bodies, with abort and timer cleanup.
+  
+  Use full retained-message provenance on canonical Pi hosts where recovery omissions are persisted before compaction. Limit the runtime-tail compatibility bridge to legacy projectionless hosts, and document conservative native fallback for prepareLoadout/codemode tool rewrites.
+- 701382c: Require fresh agent-context preparation and matching provider declarations before accepting transformed tool descriptions. Cached provider callbacks cannot approve unsent registry edits, hidden declarations use native compaction, and remote serialization must match frozen wire tools before transport. Preserve unchanged codemode-on compaction/replay and reconcile the documented limitations.
+- 3364cc0: Include credential resolution in the Codex compaction deadline and promptly stop waiting on cancellation without interrupting host-owned token persistence. Preserve configured-package inventory for default-autoload exclusion-only resource filters.
+- 69a5bed: Recognize already-dispatched model-facing tool descriptions transformed by codemode or other loadout hooks instead of comparing them with raw registry descriptions. Preserve native fallback for unobserved transformations and genuine prompt, registry, schema, or branch changes, including changes during remote requests. Scope dispatch evidence to the active session and clear it on reload or tree navigation.
+- 3364cc0: Adopt Pi 1.0.4's host-provided dependency contract: declare imported Pi and TypeBox modules as `*` peers rather than installing duplicate runtime modules, and align Pi development pins with the repository's tested 1.0.4 baseline. The wildcard identifies host module ownership; it does not promise compatibility with every Pi version.
+- Updated dependencies [3364cc0]
+- Updated dependencies [3364cc0]
+- Updated dependencies [3364cc0]
+  - @signalridge/pi-ui@1.3.3
+
+## 1.3.2
+### Patch Changes
+
+- 8190516: Normalize Codex compaction requests for Pi 0.87 providers without prepending a duplicate system prompt or restoring removed tools when the session already carries system updates; retain the original context path on older Pi hosts. Fall back to native compaction if live prompt or tool changes have not yet reached the persisted transcript, or if the prompt, tool set, or active session branch diverges while the remote request is in flight. Fingerprint only the projected conversation messages Pi actually retains after compaction: system updates are snapshotted onto the compaction entry, while context-edited replacements and raw cut-point identities still replay correctly across repeated compaction and reload.
+- 8190516: Extend the tested Pi host compatibility range through 0.87.x while retaining supported older hosts. Validate the published extensions against Pi 0.87.1 and adapt changed provider, session-context, and lifecycle contracts where necessary.
+- 8190516: Add Pi 0.99.1 to the supported host peer ranges while retaining Pi 0.84–0.87 compatibility. Align Pi development dependency pins with 0.99.1 for validation against the new host.
+- Updated dependencies [8190516]
+- Updated dependencies [8190516]
+  - @signalridge/pi-ui@1.3.2
+
+## 1.3.1
+### Patch Changes
+
+- 1f586f8: Include real tool-result text in bounded side-question context, select remote checkpoints at Pi's effective compaction boundary, honor the public agent directory, restore branch-owned stamp state on tree navigation, and preserve commit evidence through retries until agent settlement.
+- 1f586f8: Preserve Codex opaque checkpoints across Pi's retry-only assistant-tail removal using optional, fingerprint-verified version-1 proof plus explicit lifecycle provenance. Preserve that provenance across same-runtime reload without confusing a new identical assistant response with the persisted tail; persisted rebuilds reset it and unknown provenance fails closed. Bound BTW context and tool-argument construction, including suffix-key storage for wide JSON-shaped objects (enumeration remains linear). Balance out-of-order native UI waiting notifications without affecting manual blocked ownership. Foreground workflow cancellation waits for exact-owner quiescence even when stop is unavailable or rejects after reconciliation already stopped the child, including cancelled spawn allocation recovery; unconfirmed cleanup becomes durably non-resumable with a diagnostic retaining any stop error. Background execution remains detached.
+  
+  These are corrective changes: existing checkpoint fields, exports, and cross-extension protocols remain compatible, so no protocol or major-version bump is required.
+- 1f586f8: Expand Pi peer support to `^0.84.0 || ^0.85.0`, retaining 0.84 compatibility while admitting 0.85 releases. The previous zero-major caret range excluded Pi 0.85.1. Update existing Pi development dependency pins to 0.85.1.
+- d9219d4: Converge every README on one house style: plain sentence-case headings, no
+  decorative emoji.
+  
+  Ten packages carried an emoji heading scheme inherited from their upstream
+  forks while the other nineteen used plain headings, so the same monorepo
+  rendered as two unrelated projects on npmjs.com. Headings are now emoji-free
+  and titles are sentence case.
+  
+  Also removes the `Keywords` section from those ten. It duplicated each
+  package's `package.json` `keywords` field, which is what npm actually indexes,
+  and no plain-style README carried one. `Installation` is now `Install`
+  everywhere.
+  
+  Headings that were Title Case are sentence case too, so one convention now
+  covers the whole monorepo. Existing in-page anchor links are unaffected:
+  GitHub lowercases heading slugs already.
+  
+  Documentation only — no runtime change.
+- Updated dependencies [1f586f8]
+- Updated dependencies [1f586f8]
+- Updated dependencies [1f586f8]
+- Updated dependencies [1f586f8]
+  - @signalridge/pi-ui@1.3.1
+
+## 1.3.0
+### Minor Changes
+
+- 07350d4: Standardize extension-owned popup surfaces with an idempotent Pi-style border adapter. Native Pi dialogs retain their built-in framing and RPC behavior; custom menus and overlays gain consistent border rules.
+
+### Patch Changes
+
+- Updated dependencies [07350d4]
+  - @signalridge/pi-ui@1.3.0
+
+## 1.2.2
+### Patch Changes
+
+- f714ea0: Publish the package versions already prepared by the previous release transition after its first publish attempt was blocked before npm publication.
+
+## 1.2.1
+### Patch Changes
+
+- b6cf242: Peer dependency ranges now name the versions actually validated against, so an untested host combination fails at install time instead of silently at runtime: `@earendil-works/pi-coding-agent`, `pi-ai`, `pi-tui`, and `pi-agent-core` move from `"*"` to `^0.84.0`, and `typebox` from `"*"` to `^1.3.11`.
+  
+  Shared dependencies now carry ONE declared range across every package that uses them, and `bun run check:shared-deps` keeps it that way.
+  
+  `@narumitw/pi-tui-kit` was declared at three disjoint floors — `^0.54.0`, `^0.51.0`, and `^0.49.1` across nine packages — and the lockfile duly resolved three copies (0.54.0, 0.51.0, 0.49.3) installed side by side. For a shared rendering surface drawing into one terminal inside one host process, that means a theme rendering one way in one extension and another way in the next, with nothing failing at install to say so. All nine now declare `^0.54.0` and the install resolves a single copy. `@sinclair/typebox` likewise converges on `^0.34.50`.
+  
+  The new check covers `dependencies` and `peerDependencies` and compares range strings rather than their semantics: two ranges that merely overlap are still a finding, because the goal is one intentional answer per dependency rather than an accidental intersection. `devDependencies` are deliberately out of scope — a build tool is not a shared surface, and `pi-subagents` intentionally carries its own toolchain. `docs/package-boundaries.md` documents the Kit as a shared surface for the first time.
+
+## 1.0.0
+### Major Changes
+
+- Adopt a unified 1.0.0 across every published package.
+  
+  The version numbers no longer track their upstream forks individually; from this release each package
+  is versioned on its own merit against the Signalridge line, and 1.0.0 is the shared starting point.
+  Packages whose behavior changed in this release document that change in their own changeset entries;
+  the remainder are re-released unchanged so the whole set shares one baseline.
+
+### Patch Changes
+
+- Bound the resume lineage walk's skip window by the checkpoint's own creation time as well as the rendered summary's timestamp, so a session file whose entry timestamp is later than the checkpoint — hand-edited, migrated, or resumed across a clock skew — can no longer drop a native compaction summary the opaque replacement does not cover. The injected checkpoint marker also always carries a finite timestamp, and an impossible lineage is rejected before hashing the rest of the context.
+- Keep re-expanding the opaque Codex checkpoint after a session resume by tolerating replayed older compaction summaries interleaved with the retained messages, instead of silently dropping the remote history.
+
+## Unreleased
+
+- Accept legacy `@narumitw/pi-codex-compact` checkpoint summaries while validating checkpoint payloads and kept-message lineage.
+- Skip malformed/native compaction entries when selecting the newest valid Codex checkpoint instead of masking an older recoverable checkpoint.
+- Replay legacy `@narumitw/pi-codex-compact` checkpoint markers after reload by accepting and normalizing canonical and legacy marker variants.
