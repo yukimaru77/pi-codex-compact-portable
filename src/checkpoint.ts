@@ -22,6 +22,9 @@ export interface CodexCheckpointDetails {
   /** Verifiable proof of the single assistant tail Pi removes only for retry. */
   retryTrimmedTail?: AgentMessage;
   createdAt: string;
+  /** Luna handoff, when generated for a non-native receiving model. Not an exact-decoding claim. */
+  portableText?: string;
+  portableExtraction?: { model: string; effort: string; tokens: number; targetTokens: number; withinTolerance: boolean };
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -138,6 +141,8 @@ export function parseCheckpointDetails(value: unknown): CodexCheckpointDetails |
     )
       return undefined;
   }
+  if (value.portableText !== undefined && (typeof value.portableText !== 'string'
+    || !value.portableText.trim() || Buffer.byteLength(value.portableText) > REPLACEMENT_BYTE_BUDGET)) return undefined;
   const last = value.replacementHistory.at(-1);
   try {
     validateCompactionItem(last);
@@ -214,6 +219,7 @@ export function projectCheckpointContext(
   tailMode?: "full" | "runtime-omitted",
 ): AgentMessage[] | undefined {
   const summaries = new Set(fallbackSummaryVariants(details.checkpointId));
+  if (details.portableText) summaries.add(details.portableText);
   // `createdAt` is the checkpoint's own authoritative birth time; the rendered summary's
   // timestamp is only where Pi happened to place the entry. Skipping is what deletes a
   // summary from the projection, so it must be bounded by whichever of the two is older.

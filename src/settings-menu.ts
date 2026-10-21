@@ -93,7 +93,7 @@ export function createCodexCompactMenu(
           {
             id: "enabled",
             label: "Remote compaction",
-            description: "Use Codex Remote V2 when the active model is compatible.",
+            description: "Always pair Codex Remote V2 with Luna plaintext extraction, on all models.",
             currentValue: state.settings.enabled ? "On" : "Off",
             values: ["On", "Off"],
             action: "set-enabled",
@@ -109,7 +109,7 @@ export function createCodexCompactMenu(
           {
             id: "maxRetries",
             label: "Transport retries",
-            description: "Retry transient provider failures before falling back to Pi.",
+            description: "Retry transient provider failures before cancelling compaction.",
             currentValue: String(state.settings.maxRetries),
             values: ["0", "1", "2"],
             action: "set-retries",
@@ -124,8 +124,8 @@ export function createCodexCompactMenu(
           },
           {
             id: "notifyOnFallback",
-            label: "Fallback notifications",
-            description: "Warn when Remote V2 fails and native Pi compaction takes over.",
+            label: "Failure notifications",
+            description: "Warn when Codex/Luna fails; original history is preserved.",
             currentValue: state.settings.notifyOnFallback ? "On" : "Off",
             values: ["On", "Off"],
             action: "set-notify",
@@ -206,5 +206,5 @@ function compactMenuStatus(ctx: ExtensionCommandContext): CompactMenuStatus {
 
 function compactRoute(state: Readonly<CodexCompactSettingsState>, status: CompactMenuStatus | undefined): string {
   if (!state.settings.enabled) return "Pi native (Remote V2 off)";
-  return status?.remoteCompatible ? "Codex Remote V2" : "Pi native (model not compatible)";
+  return "Codex Remote V2 → Luna text";
 }

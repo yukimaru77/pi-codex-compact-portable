@@ -15,15 +15,12 @@ import {
 import {
   buildReplacementHistory,
   CHECKPOINT_KIND,
-  type CodexCheckpointDetails,
-  checkpointMarker,
   checkpointMarkerVariants,
   createCheckpointDetails,
-  fallbackSummary,
   parseCheckpointDetails,
   projectCheckpointContext,
 } from "./checkpoint.js";
-import { hasCheckpointMarker, rewriteCheckpointMarker } from "./protocol.js";
+import { hasCheckpointMarker } from "./protocol.js";
 import { requestRemoteCompaction } from "./remote.js";
 import {
   type CodexCompactSettings,
@@ -33,6 +30,9 @@ import {
 } from "./settings.js";
 import { showCodexCompactMenu } from "./settings-menu.js";
 import { comparableTools, sameTools, ToolStateTracker } from "./tool-state.js";
+import { portableModel, cachedText, projectPortable, extractForPi, addExtractionUsage,
+  checkpointKey, PORTABLE_CACHE } from './portable.js';
+import { abortable, PortableError, portableHandoff } from '../../codex-portable-compact/src/index.ts';
 
 // Extension-owned reload handoff only. Weak keys retain neither sessions nor ctx;
 // one scalar record per live manager, fenced by session identity + checkpoint ID.
@@ -58,7 +58,7 @@ function resetTailProvenance(ctx: ExtensionContext): void {
 
 const STATUS_KEY = "codex-compact";
 const EXPERIMENTAL_WARNING =
-  "Experimental: Codex Remote Compaction V2 uses an opaque, provider-specific checkpoint. Sessions require this extension and openai-codex for full replay.";
+  "Experimental: every Codex compaction includes Luna plaintext extraction, on all models. This is model-generated, not guaranteed exact recovery.";
 
 function isSupportedModel(model: Model<Api> | undefined): model is Model<"openai-codex-responses"> {
   return model?.provider === "openai-codex" && piAi.hasApi(model, "openai-codex-responses");
@@ -76,13 +76,6 @@ function activeCheckpoint(ctx: ExtensionContext) {
   const entry = activeCompaction(ctx.sessionManager.getBranch());
   const details = parseCheckpointDetails(entry?.details);
   return entry && details ? { entry, details } : undefined;
-}
-
-function isCheckpointCompatible(
-  details: CodexCheckpointDetails,
-  model: Model<Api> | undefined,
-): model is Model<"openai-codex-responses"> {
-  return isSupportedModel(model) && model.id === details.modelId;
 }
 
 // Pi 0.87 exposes the canonical context-edit projection; older supported hosts
@@ -128,48 +121,10 @@ function activeTools(pi: ExtensionAPI): Tool[] {
     }));
 }
 
-function transcriptMatchesLiveState(
-  messages: AgentMessage[],
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  toolState: ToolStateTracker,
-): boolean {
-  // Older Pi hosts have no persisted system/tool projection: their provider
-  // still uses the live shorthand, so retain that legacy compaction path.
-  if (!piCodingAgentCompat.buildSessionProjection) return true;
-  const { getCurrentSystemPrompt, getCurrentTools } = piAiCompat;
-  if (!getCurrentSystemPrompt || !getCurrentTools) return false;
-  return (
-    getCurrentSystemPrompt(messages) === ctx.getSystemPrompt() &&
-    toolState.matches(
-      ctx.sessionManager,
-      ctx.sessionManager.getSessionId(),
-      comparableTools(getCurrentTools(messages)),
-      activeTools(pi),
-    )
-  );
-}
-
-function sessionStateMatchesRequest(
-  messages: AgentMessage[],
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  expectedLeafId: string | null,
-  toolState: ToolStateTracker,
-): boolean {
-  if (!transcriptMatchesLiveState(messages, pi, ctx, toolState)) return false;
-  if (!piCodingAgentCompat.buildSessionProjection) return true;
-  const branch = ctx.sessionManager.getBranch();
-  const currentLeafId = ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id ?? null;
-  if (currentLeafId !== expectedLeafId) return false;
-  const latest = buildSessionContext(branch, currentLeafId).messages;
-  return transcriptMatchesLiveState(latest, pi, ctx, toolState);
-}
-
 function projectedCurrentMessages(
   event: SessionBeforeCompactEvent,
-  model: Model<"openai-codex-responses">,
-): { messages: AgentMessage[]; transcript: AgentMessage[]; prior?: CodexCheckpointDetails } {
+  portableText?: string,
+): { messages: AgentMessage[]; transcript: AgentMessage[] } {
   const leafId = event.branchEntries.at(-1)?.id ?? null;
   const session = buildSessionContext(event.branchEntries, leafId);
   const compaction = activeCompaction(event.branchEntries);
@@ -184,19 +139,14 @@ function projectedCurrentMessages(
     }
     return { messages: session.messages, transcript: session.messages };
   }
-  if (prior.modelId !== model.id) {
-    throw new Error("The active opaque checkpoint belongs to a different Codex model");
+  if (!portableText) {
+    throw new Error("The active checkpoint requires portable text");
   }
   const projected = projectCheckpointContext(session.messages, prior, "full");
   if (!projected) {
     throw new Error("The previous opaque checkpoint could not be projected safely");
   }
-  return { messages: projected, transcript: session.messages, prior };
-}
-
-function notifyFailure(ctx: ExtensionContext, settings: CodexCompactSettings): void {
-  if (!ctx.hasUI || !settings.notifyOnFallback) return;
-  ctx.ui.notify("Codex remote compaction failed; using Pi compaction.", "warning");
+  return { messages: projectPortable(projected, prior, portableText), transcript: session.messages };
 }
 
 function sessionStillOwned(ctx: ExtensionContext, sessionId: string, signal: AbortSignal): boolean {
@@ -240,12 +190,23 @@ async function compactRemotely(
   toolState: ToolStateTracker,
   fetch?: typeof globalThis.fetch,
 ) {
-  const model = ctx.model;
-  if (!settings.enabled || !isSupportedModel(model)) return undefined;
+  if (!settings.enabled) return undefined;
+  const selectedModel = ctx.model;
+  const nativeReceiver = isSupportedModel(selectedModel);
+  // Manual compaction does not prepare a new assistant turn. After reload,
+  // the live registry/base prompt legitimately differ from the last persisted
+  // prepared loadout (including prepareLoadout description rewrites). Compress
+  // the canonical transcript, not an invented mixture of old and live state.
+  // Fence live state separately so changes DURING the operation still cancel.
+  const livePrompt = ctx.getSystemPrompt();
+  const liveTools = structuredClone(activeTools(pi));
   const deadline = performance.now() + settings.requestTimeoutMs;
   const sessionId = ctx.sessionManager.getSessionId();
+  let stage = 'model/auth';
   ctx.ui.setStatus(STATUS_KEY, "Codex remote compaction…");
   try {
+    const previous = activeCheckpoint(ctx);
+    const model = nativeReceiver ? selectedModel : portableModel(ctx, previous?.details.modelId);
     const auth = await awaitCompactionAuth(ctx, model, event.signal, deadline);
     if (!sessionStillOwned(ctx, sessionId, event.signal)) return { cancel: true };
     if (!auth.ok || !auth.apiKey) {
@@ -253,34 +214,53 @@ async function compactRemotely(
     }
     const provider = ctx.modelRegistry.getProvider(model.provider);
     if (!provider) throw new Error("OpenAI Codex provider is unavailable");
-    const current = projectedCurrentMessages(event, model);
+    let priorText = previous ? cachedText(previous.details, event.branchEntries) : undefined;
+    if (previous && !priorText) {
+      priorText = portableHandoff(previous.details.replacementHistory,
+        (await extractForPi(ctx, previous.details.replacementHistory.at(-1)!, event.signal, auth, fetch)).text);
+    }
+    stage = 'checkpoint lineage projection';
+    const current = projectedCurrentMessages(event, priorText);
+    stage = 'transcript validation';
     const sourceLeafId = event.branchEntries.at(-1)?.id ?? null;
-    if (!sessionStateMatchesRequest(current.transcript, pi, ctx, sourceLeafId, toolState)) {
+    const matches = () => {
+      const branch = ctx.sessionManager.getBranch();
+      return (ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id ?? null) === sourceLeafId
+        && ctx.getSystemPrompt() === livePrompt
+        && sameTools(liveTools, activeTools(pi))
+        && ctx.model?.provider === selectedModel?.provider && ctx.model?.id === selectedModel?.id;
+    };
+    if (!matches()) {
+      // Report only structural differences, never prompt contents or credentials.
+      const recorded = liveTools;
+      const live = activeTools(pi);
+      const recordedNames = new Set(recorded.map(t => t.name));
+      const liveNames = new Set(live.map(t => t.name));
+      const promptMatches = livePrompt === ctx.getSystemPrompt();
+      const branch = ctx.sessionManager.getBranch();
+      const leafMatches = (ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id ?? null) === sourceLeafId;
+      const missing = [...recordedNames].filter(n => !liveNames.has(n));
+      const added = [...liveNames].filter(n => !recordedNames.has(n));
+      stage += `; prompt=${promptMatches ? 'match' : 'changed'}, branch=${leafMatches ? 'match' : 'changed'}, tools=${sameTools(recorded, live) ? 'match' : 'changed'}, removed=${missing.join('|') || 'none'}, added=${added.join('|') || 'none'}`;
       throw new Error("Live prompt or tools differ from the persisted transcript");
     }
-    const requestTools = structuredClone(activeTools(pi));
+    const requestTools = structuredClone(piAiCompat.getCurrentTools?.(current.transcript) ?? liveTools);
     const context: Context = {
-      systemPrompt: ctx.getSystemPrompt(),
+      systemPrompt: piAiCompat.getCurrentSystemPrompt?.(current.transcript) ?? livePrompt,
       messages: convertToLlm(current.messages),
       tools: requestTools,
     };
     const remainingMs = deadline - performance.now();
     if (remainingMs <= 0) throw new Error("OpenAI Codex compaction deadline exceeded");
+    stage = 'remote V2';
     const response = await requestRemoteCompaction({
       provider,
       model,
       context,
-      validatePayload: toolState.payloadValidator(ctx.sessionManager, sessionId),
       apiKey: auth.apiKey,
       headers: auth.headers,
       env: auth.env,
       signal: event.signal,
-      priorCheckpoint: current.prior
-        ? {
-            marker: checkpointMarker(current.prior.checkpointId),
-            replacementHistory: current.prior.replacementHistory,
-          }
-        : undefined,
       requestTimeoutMs: remainingMs,
       maxRetries: settings.maxRetries,
       fetch,
@@ -289,11 +269,11 @@ async function compactRemotely(
     // appendCompaction will snapshot the session's resolved system/tool state;
     // never persist a checkpoint for a request that became stale while in flight.
     if (
-      !sessionStateMatchesRequest(current.transcript, pi, ctx, sourceLeafId, toolState) ||
-      (piCodingAgentCompat.buildSessionProjection && !sameTools(requestTools, activeTools(pi)))
+      !matches()
     ) {
       throw new Error("Live prompt, tools, or session branch changed during remote compaction");
     }
+    stage = 'checkpoint creation';
     const replacementHistory = buildReplacementHistory(response.promptInput, response.item, {
       tokenBudget: settings.replacementTokenBudget,
     });
@@ -305,21 +285,37 @@ async function compactRemotely(
       // projected messages are full lineage, never a tail to remove afterward.
       willRetry: !piCodingAgentCompat.buildSessionProjection && event.willRetry,
     });
+    let usage = response.usage;
+    {
+      ctx.ui.setStatus(STATUS_KEY, 'Codex checkpoint → Luna plaintext…');
+      stage = 'Luna extraction';
+      portableHandoff(replacementHistory, 'preflight');
+      const portable = await extractForPi(ctx, response.item, event.signal, auth, fetch);
+      if (!sessionStillOwned(ctx, sessionId, event.signal) || !matches()
+        || ctx.model?.provider !== selectedModel?.provider || ctx.model?.id !== selectedModel?.id) return { cancel: true };
+      details.portableText = portableHandoff(replacementHistory, portable.text);
+      details.portableExtraction = { model: portable.selected.model, effort: portable.selected.effort,
+        tokens: portable.tokens, targetTokens: portable.targetTokens, withinTolerance: portable.withinTolerance };
+      usage = addExtractionUsage(usage, portable, ctx);
+    }
     return {
       compaction: {
-        summary: fallbackSummary(details.checkpointId),
+        summary: details.portableText!,
         firstKeptEntryId: event.preparation.firstKeptEntryId,
         tokensBefore: event.preparation.tokensBefore,
-        usage: response.usage,
+        usage,
         details,
       },
     };
-  } catch {
+  } catch (error) {
     if (event.signal.aborted || ctx.sessionManager.getSessionId() !== sessionId) {
       return { cancel: true };
     }
-    notifyFailure(ctx, settings);
-    return undefined;
+    {
+      const reason = error instanceof PortableError ? `: ${error.code}` : '';
+      if (ctx.hasUI && settings.notifyOnFallback) ctx.ui.notify(`Codex/Luna compaction failed (${stage}${reason}); history was not replaced.`, 'warning');
+      return { cancel: true };
+    }
   } finally {
     if (ctx.sessionManager.getSessionId() === sessionId) ctx.ui.setStatus(STATUS_KEY, undefined);
   }
@@ -416,7 +412,7 @@ export function createCodexCompactExtension(
       if (active) resetTailProvenance(ctx);
     });
 
-    pi.on("context", (event, ctx) => {
+    pi.on("context", async (event, ctx) => {
       if (!active || !settingsRuntime.get().settings.enabled) return undefined;
       // Agent-core invokes context preparation for a new request. Cache warming
       // reuses the prepared context and only invokes provider callbacks.
@@ -433,15 +429,54 @@ export function createCodexCompactExtension(
         );
       }
       const checkpoint = activeCheckpoint(ctx);
-      if (!checkpoint || !isCheckpointCompatible(checkpoint.details, ctx.model)) return undefined;
-      const provenance = tailProvenance.get(ctx.sessionManager);
-      const mode = piCodingAgentCompat.buildSessionProjection
-        ? "full"
-        : provenance?.checkpointId === provenanceId(ctx, checkpoint.details.checkpointId)
-          ? provenance.mode
-          : undefined;
-      const messages = projectCheckpointContext(event.messages, checkpoint.details, mode);
-      return messages ? { messages } : undefined;
+      if (!checkpoint) {
+        const raw = activeCompaction(ctx.sessionManager.getBranch());
+        if ((raw?.details as { kind?: string } | undefined)?.kind === CHECKPOINT_KIND
+          || raw?.summary.startsWith('OpenAI Codex Remote Compaction V2 checkpoint ')) {
+          ctx.abort();
+          throw new PortableError('INVALID_CHECKPOINT_STOPPED');
+        }
+        return undefined;
+      }
+      {
+        const owner = ctx.sessionManager.getSessionId();
+        const leaf = ctx.sessionManager.getLeafId();
+        const model = ctx.model;
+        const signal = ctx.signal ? AbortSignal.any([sessionController.signal, ctx.signal]) : sessionController.signal;
+        try {
+          const provenance = tailProvenance.get(ctx.sessionManager);
+          const mode = piCodingAgentCompat.buildSessionProjection ? 'full'
+            : provenance?.checkpointId === provenanceId(ctx, checkpoint.details.checkpointId)
+              ? provenance.mode : undefined;
+          const projected = projectCheckpointContext(event.messages, checkpoint.details, mode);
+          if (!projected) throw new PortableError('CHECKPOINT_LINEAGE_MISMATCH');
+          let text = cachedText(checkpoint.details, ctx.sessionManager.getBranch());
+          if (!text) {
+            portableHandoff(checkpoint.details.replacementHistory, 'preflight');
+            ctx.ui.setStatus(STATUS_KEY, 'Codex checkpoint → Luna plaintext…');
+            const portable = await abortable(extractForPi(ctx, checkpoint.details.replacementHistory.at(-1)!, signal, undefined, options.fetch), signal);
+            signal.throwIfAborted();
+            if (!active || ctx.sessionManager.getSessionId() !== owner || ctx.sessionManager.getLeafId() !== leaf
+              || ctx.model?.id !== model?.id || ctx.model?.provider !== model?.provider) throw new PortableError('SESSION_CHANGED');
+            text = portableHandoff(checkpoint.details.replacementHistory, portable.text);
+            // Metadata-only entry: original transcript/checkpoint is immutable. Cache follows its branch.
+            pi.appendEntry(PORTABLE_CACHE, { key: checkpointKey(checkpoint.details), text,
+              selected: portable.selected, tokens: portable.tokens, targetTokens: portable.targetTokens,
+              withinTolerance: portable.withinTolerance, receipts: portable.receipts });
+          }
+          return { messages: projectPortable(projected, checkpoint.details, text) };
+        } catch (error) {
+          // Pi catches context-hook exceptions. Explicitly abort the request before returning,
+          // otherwise a failed conversion could send only the fallback marker to another model.
+          const cancelled = signal.aborted;
+          ctx.abort();
+          const reason = error instanceof PortableError ? ` (${error.code})` : '';
+          if (ctx.hasUI && !cancelled) ctx.ui.notify(`Luna checkpoint conversion failed${reason}; this request was stopped without replacing history.`, 'error');
+          throw new PortableError('CHECKPOINT_CONVERSION_STOPPED');
+        } finally {
+          if (ctx.sessionManager.getSessionId() === owner) ctx.ui.setStatus(STATUS_KEY, undefined);
+        }
+      }
     });
 
     pi.on("before_provider_request", (event, ctx) => {
@@ -469,22 +504,23 @@ export function createCodexCompactExtension(
         }
       }
       const checkpoint = activeCheckpoint(ctx);
-      if (!checkpoint || !isCheckpointCompatible(checkpoint.details, ctx.model)) return undefined;
+      if (!checkpoint) return undefined;
       const markers = checkpointMarkerVariants(checkpoint.details.checkpointId);
       if (!hasCheckpointMarker(event.payload, markers)) return undefined;
-      return rewriteCheckpointMarker(event.payload, markers, checkpoint.details.replacementHistory);
+      ctx.abort();
+      throw new PortableError('OPAQUE_REPLAY_DISABLED');
     });
 
     pi.on("model_select", (event, ctx) => {
       if (!settingsRuntime.get().settings.enabled) return;
       const checkpoint = activeCheckpoint(ctx);
-      if (!checkpoint || isCheckpointCompatible(checkpoint.details, event.model)) return;
+      if (!checkpoint || cachedText(checkpoint.details, ctx.sessionManager.getBranch())) return;
       const key = `${ctx.sessionManager.getSessionId()}:${event.model.provider}:${event.model.id}`;
       if (providerWarnings.has(key)) return;
       providerWarnings.add(key);
       if (ctx.hasUI) {
         ctx.ui.notify(
-          "The active Codex checkpoint cannot replay on this model; Pi will expose only its fallback marker and retained recent messages.",
+          "The Codex checkpoint needs portable text on this model. Luna conversion will run before the next request (or reuse the saved handoff).",
           "warning",
         );
       }
