@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
+import type { Context, Model, Tool } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
@@ -60,9 +60,7 @@ const STATUS_KEY = "codex-compact";
 const EXPERIMENTAL_WARNING =
   "Experimental: every Codex compaction includes Luna plaintext extraction, on all models. This is model-generated, not guaranteed exact recovery.";
 
-function isSupportedModel(model: Model<Api> | undefined): model is Model<"openai-codex-responses"> {
-  return model?.provider === "openai-codex" && piAi.hasApi(model, "openai-codex-responses");
-}
+const COMPACTION_MODEL_ID = "gpt-6.1-sol";
 
 function activeCompaction(entries: SessionEntry[]) {
   // Pi places the effective compaction first, before any retained older entries.
@@ -192,7 +190,6 @@ async function compactRemotely(
 ) {
   if (!settings.enabled) return undefined;
   const selectedModel = ctx.model;
-  const nativeReceiver = isSupportedModel(selectedModel);
   // Manual compaction does not prepare a new assistant turn. After reload,
   // the live registry/base prompt legitimately differ from the last persisted
   // prepared loadout (including prepareLoadout description rewrites). Compress
@@ -206,7 +203,9 @@ async function compactRemotely(
   ctx.ui.setStatus(STATUS_KEY, "Codex remote compaction…");
   try {
     const previous = activeCheckpoint(ctx);
-    const model = nativeReceiver ? selectedModel : portableModel(ctx, previous?.details.modelId);
+    // Every Codex V2 compaction runs on Sol regardless of the session model;
+    // requests always receive the Luna plaintext, never the opaque checkpoint.
+    const model = portableModel(ctx, COMPACTION_MODEL_ID);
     const auth = await awaitCompactionAuth(ctx, model, event.signal, deadline);
     if (!sessionStillOwned(ctx, sessionId, event.signal)) return { cancel: true };
     if (!auth.ok || !auth.apiKey) {
