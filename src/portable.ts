@@ -6,7 +6,7 @@ import type { Model, Usage } from '@earendil-works/pi-ai';
 import {
   extractPortable, sendExtraction, accountIdFromAuth, MAX_TEXT_BYTES, PortableError, abortable,
   type Json, type PortableResult,
-} from '../../codex-portable-compact/src/index.ts';
+} from './portable-core.ts';
 import { checkpointMarkerVariants, type CodexCheckpointDetails } from './checkpoint.js';
 
 export const PORTABLE_CACHE = 'pi-codex-portable-extraction-v1';

@@ -1,8 +1,8 @@
 {
-  "name": "pi-codex-compact-portable-local",
+  "name": "pi-codex-compact-portable",
   "version": "1.3.3-portable.0",
   "private": true,
-  "description": "Experimental Codex Remote Compaction V2 for Pi's OpenAI Codex provider.",
+  "description": "Codex Remote Compaction V2 for Pi, paired with KB-compatible plaintext extraction so compacted conversations work on any model.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -33,7 +33,8 @@
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test:smoke": "node --import ./test/setup.mjs --import tsx test/sdk-smoke.mjs",
     "test": "node --import ./test/setup.mjs --import tsx --test test/*.test.ts",
-    "lint": "biome check ."
+    "lint": "biome check .",
+    "test:core": "node --import tsx --test test/portable-core.test.ts"
   },
   "dependencies": {
     "@narumitw/pi-tui-kit": "^0.54.0",
@@ -50,16 +51,16 @@
     "@earendil-works/pi-ai": "1.0.4",
     "@earendil-works/pi-coding-agent": "1.0.4",
     "@types/node": "26.1.2",
+    "tsx": "^4.23.15",
     "typescript": "7.0.2"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/signalridge/pi-extensions",
-    "directory": "packages/pi-codex-compact"
+    "url": "https://github.com/yukimaru77/pi-codex-compact-portable.git"
   },
-  "homepage": "https://github.com/signalridge/pi-extensions/tree/main/packages/pi-codex-compact",
+  "homepage": "https://github.com/yukimaru77/pi-codex-compact-portable",
   "bugs": {
-    "url": "https://github.com/signalridge/pi-extensions/issues"
+    "url": "https://github.com/yukimaru77/pi-codex-compact-portable/issues"
   },
   "publishConfig": {
     "access": "public"

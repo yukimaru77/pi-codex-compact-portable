@@ -32,7 +32,7 @@ import { showCodexCompactMenu } from "./settings-menu.js";
 import { comparableTools, sameTools, ToolStateTracker } from "./tool-state.js";
 import { portableModel, cachedText, projectPortable, extractForPi, addExtractionUsage,
   checkpointKey, PORTABLE_CACHE } from './portable.js';
-import { abortable, PortableError, portableHandoff } from '../../codex-portable-compact/src/index.ts';
+import { abortable, PortableError, portableHandoff } from './portable-core.ts';
 
 // Extension-owned reload handoff only. Weak keys retain neither sessions nor ctx;
 // one scalar record per live manager, fenced by session identity + checkpoint ID.
